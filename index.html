@@ -14,8 +14,8 @@
     --text: #23231f;
     --text-secondary: #6b6a63;
     --text-muted: #9b9a91;
-    --accent: #3c7a5e;
-    --accent-light: #e3efe8;
+    --accent: #c65c56;
+    --accent-light: #f5e2e0;
     --danger: #b2453a;
     --danger-light: #f7e6e4;
     --warning: #b9812b;
@@ -33,8 +33,8 @@
       --text: #ece9e1;
       --text-secondary: #b3b0a6;
       --text-muted: #7d7a70;
-      --accent: #6fb896;
-      --accent-light: #223a30;
+      --accent: #d97b76;
+      --accent-light: #3d2624;
       --danger: #e08277;
       --danger-light: #3a2422;
       --warning: #dcb15f;
@@ -47,7 +47,7 @@
     background: var(--bg);
     color: var(--text);
     line-height: 1.6;
-    padding-bottom: 76px;
+    padding-bottom: 84px;
   }
   #app { max-width: 480px; margin: 0 auto; padding: 16px; }
   h1, h2, h3 { font-weight: 600; margin: 0 0 12px; }
@@ -129,11 +129,13 @@
     border-top: 1px solid var(--border); display: flex; max-width: 480px; margin: 0 auto;
   }
   .tabbar button {
-    flex: 1; background: none; border: none; padding: 10px 0 8px; font-size: 10px;
-    color: var(--text-muted); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    flex: 1; background: none; border: none; padding: 12px 0 10px; font-size: 10px;
+    color: var(--text-muted); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px;
+    min-height: 56px;
   }
   .tabbar button.active { color: var(--accent); }
-  .tabbar svg { width: 20px; height: 20px; }
+  .tabbar svg { width: 26px; height: 26px; }
+  .tabbar button span { line-height: 1; }
 
   .period-toggle { display: flex; gap: 6px; margin-bottom: 12px; }
   .period-toggle button {
@@ -163,6 +165,12 @@
   }
   .analysis-box .row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 13px; }
   img.preview { width: 100%; border-radius: var(--radius); margin-top: 8px; max-height: 220px; object-fit: cover; }
+
+  .theme-swatch {
+    width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--border);
+    cursor: pointer; padding: 0; position: relative;
+  }
+  .theme-swatch.selected { border-color: var(--text); box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text); }
 </style>
 </head>
 <body>
@@ -199,6 +207,17 @@ const GEMINI_MODELS = [
   { key: "gemini-3.7-flash", label: "Gemini 3.7 Flash(最新・無料枠は要確認)" },
 ];
 
+const MEAL_TAGS = [
+  { key: "breakfast", label: "朝食", once: true },
+  { key: "lunch", label: "昼食", once: true },
+  { key: "dinner", label: "夕食", once: true },
+  { key: "snack", label: "間食", once: false },
+];
+function mealTagInfo(key) { return MEAL_TAGS.find(t => t.key === key) || { key, label: key, once: false }; }
+
+const THEME_PRESETS = ["#c65c56", "#3c7a5e", "#3a6ea5", "#7a5c9e", "#c17a3a", "#4a8a8a"];
+const BG_PRESETS = ["#f5f5f2", "#fbecea", "#eaf3ee", "#eaf1f7", "#faf3e6", "#f2eef7"];
+
 /* ==================== ストレージ層 ==================== */
 const Store = {
   get(key, fallback) {
@@ -221,6 +240,8 @@ function loadGlobal() {
     model,
     profiles: Store.get("profiles", [{ id: "p1", name: "自分" }]),
     currentProfileId: Store.get("currentProfileId", "p1"),
+    themeColor: Store.get("theme_color", THEME_PRESETS[0]),
+    bgColor: Store.get("bg_color", BG_PRESETS[0]),
   };
 }
 function saveGlobal(g) {
@@ -228,6 +249,8 @@ function saveGlobal(g) {
   Store.set("gemini_model", g.model);
   Store.set("profiles", g.profiles);
   Store.set("currentProfileId", g.currentProfileId);
+  Store.set("theme_color", g.themeColor);
+  Store.set("bg_color", g.bgColor);
 }
 
 function loadProfileData(profileId) {
@@ -256,6 +279,39 @@ let weightPeriod = "week";
 let chartInstance = null;
 
 function persist() { saveGlobal(G); saveProfileData(G.currentProfileId, P); }
+
+/* ==================== テーマカラー ==================== */
+function hexToRgb(hex) {
+  const m = String(hex).trim().match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+  if (!m) return null;
+  return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
+}
+function rgbToHex(r, g, b) {
+  const c = v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+  return `#${c(r)}${c(g)}${c(b)}`;
+}
+function mixHex(hexA, rgbB, ratioA) {
+  const a = hexToRgb(hexA);
+  if (!a || !rgbB) return hexA;
+  return rgbToHex(
+    a.r * ratioA + rgbB.r * (1 - ratioA),
+    a.g * ratioA + rgbB.g * (1 - ratioA),
+    a.b * ratioA + rgbB.b * (1 - ratioA)
+  );
+}
+function applyTheme(hex) {
+  if (!hex || !hexToRgb(hex)) return;
+  const root = document.documentElement;
+  root.style.setProperty("--accent", hex);
+  // ライト/ダークどちらでも自然に馴染むよう、現在の背景色(surface-2)とブレンドして薄色を作る
+  const surface2 = getComputedStyle(root).getPropertyValue("--surface-2").trim();
+  const s2rgb = hexToRgb(surface2) || { r: 240, g: 239, b: 233 };
+  root.style.setProperty("--accent-light", mixHex(hex, s2rgb, 0.22));
+}
+function applyBgColor(hex) {
+  if (!hex || !hexToRgb(hex)) return;
+  document.documentElement.style.setProperty("--bg", hex);
+}
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 function uid() { return Math.random().toString(36).slice(2, 10); }
@@ -290,6 +346,22 @@ function goalsBMRInfo() {
   const factorObj = ACTIVITY_LEVELS.find(a => a.key === g.activityLevel) || ACTIVITY_LEVELS[0];
   const tdee = bmr ? bmr * factorObj.factor : null;
   return { bmr, tdee };
+}
+function idealDailyIntake() {
+  // 目標体重・目標日が設定されていれば、そこから逆算した1日あたりの目安摂取カロリーを返す。
+  // 未設定の場合はTDEE(維持カロリー)を目安として返す。データ不足時はnull。
+  const g = P.goals;
+  const { tdee } = goalsBMRInfo();
+  if (!tdee) return null;
+  if (g.startWeight && g.targetWeight && g.startDate && g.targetDate) {
+    const start = new Date(g.startDate).getTime();
+    const end = new Date(g.targetDate).getTime();
+    const totalDays = Math.max(1, Math.round((end - start) / 86400000));
+    const deltaKg = g.startWeight - g.targetWeight; // 減量なら正の値
+    const dailyDeficit = (deltaKg * 7700) / totalDays; // 体脂肪1kgあたり約7700kcalで概算
+    return Math.round(tdee - dailyDeficit);
+  }
+  return Math.round(tdee);
 }
 function dailySum(logs, dateField, valueField, date) {
   return logs.filter(l => l[dateField] === date).reduce((s, l) => s + (l[valueField] || 0), 0);
@@ -378,6 +450,14 @@ function renderTab() {
   return "";
 }
 
+const TAB_ICONS = {
+  home: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>`,
+  meals: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v8a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2V2"/><path d="M8 12v10"/><path d="M17 2c-1.5 0-3 1.5-3 4v4h3v10"/><path d="M17 2v20"/></svg>`,
+  exercise: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="16" cy="4" r="2"/><path d="M10 22l2-8 -3-2 1-5 4 1 2 4 3 1"/><path d="M9 14l-3 2 -2 6"/></svg>`,
+  weight: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v4l3 2"/></svg>`,
+  goals: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>`,
+};
+
 function renderTabbar() {
   const tabs = [
     { key: "home", label: "ホーム" },
@@ -387,7 +467,7 @@ function renderTabbar() {
     { key: "goals", label: "目標" },
   ];
   return `<div class="tabbar">${tabs.map(t =>
-    `<button data-tab="${t.key}" class="${currentTab === t.key ? "active" : ""}">${t.label}</button>`
+    `<button data-tab="${t.key}" class="${currentTab === t.key ? "active" : ""}">${TAB_ICONS[t.key]}<span>${t.label}</span></button>`
   ).join("")}</div>`;
 }
 
@@ -454,6 +534,19 @@ function renderHome() {
 }
 
 /* ==================== 食事 ==================== */
+function tagStats(periodDays = 30) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - periodDays);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  const recent = P.mealLogs.filter(m => m.date >= cutoffStr);
+  return MEAL_TAGS.map(tag => {
+    const items = recent.filter(m => (m.tag || "snack") === tag.key);
+    const count = items.length;
+    const avgKcal = count > 0 ? items.reduce((s, m) => s + (m.calories || 0), 0) / count : null;
+    return { ...tag, count, avgKcal };
+  });
+}
+
 function renderMeals() {
   const grouped = {};
   [...P.mealLogs].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).forEach(m => {
@@ -467,24 +560,52 @@ function renderMeals() {
     : dates.map(date => `
       <div class="card">
         <h3>${date}</h3>
-        ${grouped[date].map(m => `
+        ${grouped[date].map(m => {
+          const tag = mealTagInfo(m.tag || "snack");
+          return `
           <div class="list-item" data-view-meal="${m.id}" style="cursor:pointer;">
             <div>
-              <div class="name">${escapeHtml(m.food_name)}</div>
+              <span class="tag">${tag.label}</span>
+              <div class="name" style="margin-top:4px;">${escapeHtml(m.food_name)}</div>
               <div class="sub">${m.macros ? `糖質${fmt(m.macros.carbs_g)}g / 脂質${fmt(m.macros.fat_g)}g / たんぱく質${fmt(m.macros.protein_g)}g` : ""}</div>
             </div>
             <div style="display:flex; align-items:center; gap:6px;">
               <span class="val">${fmt(m.calories)}kcal</span>
               <button class="del-btn" data-del-meal="${m.id}">✕</button>
             </div>
-          </div>`).join("")}
+          </div>`;
+        }).join("")}
       </div>`).join("");
+
+  const stats = tagStats(30);
+  const statsHtml = `
+  <div class="card">
+    <h3>タグ別統計(直近30日)</h3>
+    <div class="grid-2">
+      ${stats.map(s => `
+        <div style="background:var(--surface-2); border-radius:var(--radius); padding:10px;">
+          <div class="metric-label">${s.label}</div>
+          <div class="metric-value" style="font-size:17px;">${s.avgKcal !== null ? fmt(s.avgKcal) + "kcal" : "-"}</div>
+          <div class="metric-sub">${s.count}回</div>
+        </div>`).join("")}
+    </div>
+  </div>`;
 
   return `
   <h1>食事記録</h1>
   <button class="primary" id="openMealModal" style="margin-bottom:16px;">＋ 食事を追加</button>
+  ${statsHtml}
   ${listHtml}
   `;
+}
+
+function mealTagOptionsHtml() {
+  const today = todayStr();
+  const usedTodayTags = new Set(P.mealLogs.filter(m => m.date === today).map(m => m.tag || "snack"));
+  return MEAL_TAGS.map(t => {
+    const usedUp = t.once && usedTodayTags.has(t.key);
+    return `<option value="${t.key}">${t.label}${usedUp ? "(本日記録済み・選択で上書き)" : ""}</option>`;
+  }).join("");
 }
 
 function renderMealModal() {
@@ -492,6 +613,10 @@ function renderMealModal() {
   <div class="modal-overlay" id="mealModalOverlay">
     <div class="modal-sheet">
       <div class="modal-head"><h2>食事を追加</h2><button class="icon-btn" id="closeMealModal">✕</button></div>
+
+      <label>タグ</label>
+      <select id="mealTagSelect">${mealTagOptionsHtml()}</select>
+      <p class="hint-text">朝食・昼食・夕食は1日1回までです(選び直すとその日の記録が上書きされます)。間食は何回でも記録できます。</p>
 
       <label>方法</label>
       <div class="period-toggle">
@@ -593,7 +718,7 @@ function renderWeight() {
   <div class="card">
     <h3>日別の摂取・消費カロリー</h3>
     <canvas id="calorieChart" height="220"></canvas>
-    <p class="hint-text">上の週/月/年の期間選択に連動します。消費カロリーは運動記録のみ(基礎代謝は含みません)。</p>
+    <p class="hint-text">上の週/月/年の期間選択に連動します。消費カロリーは運動記録のみ(基礎代謝は含みません)。破線は目標から逆算した目安摂取カロリーです(目標タブの設定に応じて自動計算)。</p>
   </div>
   `;
 }
@@ -662,17 +787,26 @@ function drawCalorieChart() {
   const labels = dateRangeArray(days);
   const intakeData = labels.map(d => dailySum(P.mealLogs, "date", "calories", d));
   const burnData = labels.map(d => dailySum(P.exerciseLogs, "date", "caloriesBurned", d));
+  const ideal = idealDailyIntake();
+
+  const datasets = [];
+  if (ideal) {
+    // 目安摂取カロリーは他の線の「裏」に薄く表示するため、datasetsの先頭に置く
+    datasets.push({
+      label: "目安摂取kcal", data: labels.map(() => ideal),
+      borderColor: "rgba(120,120,110,0.45)", borderDash: [4, 4], borderWidth: 1,
+      pointRadius: 0, fill: false, tension: 0,
+    });
+  }
+  datasets.push(
+    { label: "摂取kcal", data: intakeData, borderColor: "#3c7a5e", backgroundColor: "rgba(60,122,94,0.1)", tension: 0.3, fill: true, pointRadius: labels.length > 60 ? 0 : 2 },
+    { label: "消費kcal(運動)", data: burnData, borderColor: "#b9812b", backgroundColor: "rgba(185,129,43,0.1)", tension: 0.3, fill: true, pointRadius: labels.length > 60 ? 0 : 2 },
+  );
 
   if (calorieChartInstance) calorieChartInstance.destroy();
   calorieChartInstance = new Chart(canvas, {
-    type: "bar",
-    data: {
-      labels,
-      datasets: [
-        { label: "摂取kcal", data: intakeData, backgroundColor: "rgba(60,122,94,0.6)" },
-        { label: "消費kcal(運動)", data: burnData, backgroundColor: "rgba(185,129,43,0.6)" },
-      ],
-    },
+    type: "line",
+    data: { labels, datasets },
     options: {
       responsive: true,
       plugins: { legend: { display: true, labels: { font: { size: 11 } } } },
@@ -747,6 +881,25 @@ function renderSettings() {
 
   return `
   <h1>設定</h1>
+  <div class="card">
+    <h3>テーマカラー</h3>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;">
+      ${THEME_PRESETS.map(p => `<button type="button" class="theme-swatch ${G.themeColor === p ? "selected" : ""}" data-theme-color="${p}" style="background:${p};" aria-label="${p}"></button>`).join("")}
+    </div>
+    <label>カスタムカラー</label>
+    <input type="color" id="customThemeColor" value="${G.themeColor}">
+  </div>
+
+  <div class="card">
+    <h3>背景カラー</h3>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;">
+      ${BG_PRESETS.map(p => `<button type="button" class="theme-swatch ${G.bgColor === p ? "selected" : ""}" data-bg-color="${p}" style="background:${p};" aria-label="${p}"></button>`).join("")}
+    </div>
+    <label>カスタムカラー</label>
+    <input type="color" id="customBgColor" value="${G.bgColor}">
+    <p class="hint-text">カード部分の色(白/黒)はシステムのライト/ダーク設定に自動で追従します。背景カラーはページ全体のベースカラーです。</p>
+  </div>
+
   <div class="card">
     <h3>Gemini API</h3>
     <label>APIキー</label>
@@ -877,6 +1030,34 @@ function attachHandlers() {
   });
 
   // 設定
+  document.querySelectorAll("[data-theme-color]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      G.themeColor = btn.dataset.themeColor;
+      saveGlobal(G);
+      applyTheme(G.themeColor);
+      render();
+    });
+  });
+  document.getElementById("customThemeColor")?.addEventListener("input", (e) => {
+    G.themeColor = e.target.value;
+    saveGlobal(G);
+    applyTheme(G.themeColor);
+  });
+  document.getElementById("customThemeColor")?.addEventListener("change", () => { render(); });
+  document.querySelectorAll("[data-bg-color]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      G.bgColor = btn.dataset.bgColor;
+      saveGlobal(G);
+      applyBgColor(G.bgColor);
+      render();
+    });
+  });
+  document.getElementById("customBgColor")?.addEventListener("input", (e) => {
+    G.bgColor = e.target.value;
+    saveGlobal(G);
+    applyBgColor(G.bgColor);
+  });
+  document.getElementById("customBgColor")?.addEventListener("change", () => { render(); });
   document.getElementById("saveApiBtn")?.addEventListener("click", () => {
     G.apiKey = document.getElementById("apiKeyInput").value.trim();
     G.model = document.getElementById("modelSelect").value;
@@ -934,7 +1115,7 @@ function renderMealDetailModal(m) {
   <div class="modal-overlay" id="mealDetailOverlay">
     <div class="modal-sheet">
       <div class="modal-head"><h2>${escapeHtml(m.food_name)}</h2><button class="icon-btn" id="closeMealDetailModal">✕</button></div>
-      <p class="hint-text">${m.date} に記録</p>
+      <p class="hint-text">${m.date} に記録 ・ <span class="tag">${mealTagInfo(m.tag || "snack").label}</span></p>
       <div class="analysis-box">
         <div class="row"><span>カロリー</span><span>${fmt(m.calories)}kcal</span></div>
         <div class="row"><span>糖質 / 脂質 / たんぱく質</span><span>${fmt(m.macros?.carbs_g)}g / ${fmt(m.macros?.fat_g)}g / ${fmt(m.macros?.protein_g)}g</span></div>
@@ -1028,8 +1209,21 @@ async function runAnalysis() {
 function saveMealFromAnalysis() {
   if (!lastAnalysis) return;
   const now = new Date();
+  const date = now.toISOString().slice(0, 10);
+  const tagKey = document.getElementById("mealTagSelect")?.value || "snack";
+  const tag = mealTagInfo(tagKey);
+
+  if (tag.once) {
+    const existing = P.mealLogs.find(m => m.date === date && (m.tag || "snack") === tagKey);
+    if (existing) {
+      const ok = confirm(`本日の「${tag.label}」は既に記録されています(${existing.food_name})。上書きしますか?`);
+      if (!ok) return;
+      P.mealLogs = P.mealLogs.filter(m => m.id !== existing.id);
+    }
+  }
+
   P.mealLogs.push({
-    id: uid(), date: now.toISOString().slice(0, 10), timestamp: now.toISOString(),
+    id: uid(), date, timestamp: now.toISOString(), tag: tagKey,
     food_name: lastAnalysis.food_name, calories: lastAnalysis.estimated_calories,
     macros: lastAnalysis.macros, diet_factors: lastAnalysis.diet_factors, notes: lastAnalysis.notes,
   });
@@ -1039,6 +1233,8 @@ function saveMealFromAnalysis() {
 }
 
 /* ==================== 起動 ==================== */
+applyTheme(G.themeColor);
+applyBgColor(G.bgColor);
 render();
 </script>
 </body>
