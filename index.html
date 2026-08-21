@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ダイエットトラッカー</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <style>
   :root {
@@ -708,9 +711,9 @@ function renderWeight() {
   <div class="card">
     <h3>体重の推移</h3>
     <div class="period-toggle">
+      <button type="button" data-period="day" class="${weightPeriod === "day" ? "active" : ""}">日</button>
       <button type="button" data-period="week" class="${weightPeriod === "week" ? "active" : ""}">週</button>
       <button type="button" data-period="month" class="${weightPeriod === "month" ? "active" : ""}">月</button>
-      <button type="button" data-period="year" class="${weightPeriod === "year" ? "active" : ""}">年</button>
     </div>
     <canvas id="weightChart" height="220"></canvas>
   </div>
@@ -726,7 +729,7 @@ function renderWeight() {
 function drawWeightChart() {
   const canvas = document.getElementById("weightChart");
   if (!canvas || typeof Chart === "undefined") return;
-  const days = weightPeriod === "week" ? 7 : weightPeriod === "month" ? 30 : 365;
+  const days = weightPeriod === "day" ? 3 : weightPeriod === "week" ? 7 : 30;
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
   const cutoffStr = cutoff.toISOString().slice(0, 10);
@@ -783,7 +786,7 @@ let calorieChartInstance = null;
 function drawCalorieChart() {
   const canvas = document.getElementById("calorieChart");
   if (!canvas || typeof Chart === "undefined") return;
-  const days = weightPeriod === "week" ? 7 : weightPeriod === "month" ? 30 : 365;
+  const days = weightPeriod === "day" ? 3 : weightPeriod === "week" ? 7 : 30;
   const labels = dateRangeArray(days);
   const intakeData = labels.map(d => dailySum(P.mealLogs, "date", "calories", d));
   const burnData = labels.map(d => dailySum(P.exerciseLogs, "date", "caloriesBurned", d));
@@ -918,6 +921,15 @@ function renderSettings() {
       <button class="secondary small" id="addProfileBtn">追加</button>
     </div>
     <p class="hint-text">家族や友人と共有する場合、それぞれのプロフィールを作成してください。データはプロフィールごとに分けて保存されます(同じブラウザ内での分離であり、他端末とは共有されません)。</p>
+  </div>
+
+  <div class="card">
+    <h3>データのバックアップ</h3>
+    <p class="hint-text">記録はブラウザ内にのみ保存されています。端末やアクセス方法(ブックマーク/URL直接入力など)を変えると別の保存領域として扱われ、記録が見えなくなることがあります。定期的にエクスポートしておくと安心です。</p>
+    <button class="secondary" id="exportDataBtn" style="margin-top:8px;">現在のプロフィールをエクスポート</button>
+    <label style="margin-top:12px;">バックアップファイルから復元</label>
+    <input type="file" accept="application/json" id="importDataInput">
+    <p class="hint-text">復元すると、現在のプロフィールの記録がファイルの内容で上書きされます。</p>
   </div>
   `;
 }
@@ -1086,6 +1098,48 @@ function attachHandlers() {
       P = loadProfileData(G.currentProfileId);
       render();
     });
+  });
+
+  // データのバックアップ(エクスポート/インポート)
+  document.getElementById("exportDataBtn")?.addEventListener("click", () => {
+    const profileName = G.profiles.find(p => p.id === G.currentProfileId)?.name || "profile";
+    const payload = { exportedAt: new Date().toISOString(), profileName, profileId: G.currentProfileId, data: P };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `diet-tracker-${profileName}-${todayStr()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+  document.getElementById("importDataInput")?.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const payload = JSON.parse(reader.result);
+        const data = payload.data || payload; // 直接dataだけのJSONにも対応
+        if (!data || (!data.weightLogs && !data.mealLogs && !data.exerciseLogs && !data.goals)) {
+          throw new Error("形式が正しくありません。");
+        }
+        if (!confirm("現在のプロフィールの記録をこのファイルの内容で上書きします。よろしいですか?")) return;
+        P = {
+          weightLogs: data.weightLogs || [],
+          mealLogs: data.mealLogs || [],
+          exerciseLogs: data.exerciseLogs || [],
+          goals: data.goals || loadProfileData(G.currentProfileId).goals,
+        };
+        persist();
+        alert("復元しました。");
+        render();
+      } catch (err) {
+        alert("読み込みに失敗しました: " + err.message);
+      }
+    };
+    reader.readAsText(file);
   });
 }
 
